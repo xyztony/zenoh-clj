@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET_TRIPLE="aarch64-apple-darwin"
+ZENOH_BIN_DIR="${HOME}/.cargo/bin"
+ZENOH_LIB_DIR="${HOME}/.zenoh/lib"
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "This installer targets macOS. Detected: $(uname -s)"; exit 1
+fi
+ARCH="$(uname -m)"
+if [[ "${ARCH}" != "arm64" && "${ARCH}" != "aarch64" ]]; then
+  echo "This installer targets arm64/aarch64. Detected: ${ARCH}"; exit 1
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "Error: cargo not found."; exit 1
+fi
+
+mkdir -p "${ZENOH_BIN_DIR}" "${ZENOH_LIB_DIR}"
+
+BUILD_DIR="$(mktemp -d -t zenoh-build-XXXXX)"
+cleanup() { rm -rf "${BUILD_DIR}"; }
+trap cleanup EXIT
+
+export CARGO_PROFILE_RELEASE_LTO=false
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+
+git clone --depth 1 https://github.com/eclipse-zenoh/zenoh.git "${BUILD_DIR}/zenoh"
+cd "${BUILD_DIR}/zenoh"
+cargo build --release --all-targets
+
+git clone --depth 1 https://github.com/eclipse-zenoh/zenoh-backend-filesystem.git "${BUILD_DIR}/zenoh-backend-filesystem"
+cd "${BUILD_DIR}/zenoh-backend-filesystem"
+cargo build --release
+
+cp -f "${BUILD_DIR}/zenoh/target/release/zenohd" "${ZENOH_BIN_DIR}/zenohd"
+chmod +x "${ZENOH_BIN_DIR}/zenohd"
+
+cp -f "${BUILD_DIR}/zenoh/target/release/libzenoh_plugin_storage_manager.dylib" "${ZENOH_LIB_DIR}/"
+cp -f "${BUILD_DIR}/zenoh/target/release/libzenoh_plugin_rest.dylib" "${ZENOH_LIB_DIR}/"
+cp -f "${BUILD_DIR}/zenoh-backend-filesystem/target/release/libzenoh_backend_fs.dylib" "${ZENOH_LIB_DIR}/"

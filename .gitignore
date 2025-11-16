@@ -1,14 +1,13 @@
-pom.xml
-pom.xml.asc
-*.jar
-*.class
-/lib/
-/classes/
-/target/
-/checkouts/
-.lein-deps-sum
-.lein-repl-history
-.lein-plugins/
-.lein-failures
-.nrepl-port
+# Clojure
+target/
 .cpcache/
+.nrepl-port
+.rebel_readline_history
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
