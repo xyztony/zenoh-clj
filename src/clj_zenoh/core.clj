@@ -8,6 +8,7 @@
            [io.zenoh.keyexpr KeyExpr]
            [io.zenoh.pubsub Publisher PublisherOptions PutOptions Subscriber]
            [io.zenoh.query Reply Reply$Success]
+           [io.zenoh.qos CongestionControl Reliability]
            [io.zenoh.sample Sample]
            [org.apache.commons.net.ntp TimeStamp]))
 
@@ -74,12 +75,27 @@
   `(with-open [~binding (open ~config)]
      ~@body))
 
+(defn- normalize-key-expr
+  "Convert keyword/symbol to string without leading colon.
+  Keywords: :test/key -> 'test/key', :key -> 'key'
+  Symbols: test/key -> 'test/key'
+  Strings: passed through"
+  [k]
+  (cond
+    (or (keyword? k) (symbol? k))
+    (let [ns (namespace k)
+          nm (name k)]
+      (if ns
+        (format "%s/%s" ns nm)
+        nm))
+    :else (str k)))
+
 (defn ->key-expr
   "Convert string to [[io.zenoh.KeyExpr]]."
   [key-expr]
   (if (instance? KeyExpr key-expr)
     key-expr
-    (KeyExpr/tryFrom (str key-expr))))
+    (KeyExpr/tryFrom (normalize-key-expr key-expr))))
 
 (defn- ->zbytes
   "Convert data to [[io.zenoh.bytes.ZBytes]]."
@@ -131,6 +147,22 @@
         (str ns-part "/" name-part))
       (.toString enc))))
 
+(defn- ->congestion-control
+  "Convert keyword to [[io.zenoh.qos.CongestionControl]]."
+  [cc]
+  (case cc
+    :drop CongestionControl/DROP
+    :block CongestionControl/BLOCK
+    nil))
+
+(defn- ->reliability
+  "Convert keyword to [[io.zenoh.qos.Reliability]]."
+  [rel]
+  (case rel
+    :reliable Reliability/RELIABLE
+    :best-effort Reliability/BEST_EFFORT
+    nil))
+
 (defn sample->map
   "Convert [[io.zenoh.sample.Sample]] to a clojure map"
   [^Sample sample]
@@ -145,39 +177,26 @@
 
 (defn- publisher-options
   "Build [[io.zenoh.pubsub.PublisherOptions]] from options map.
-  
   Accepts:
     {:encoding :zenoh/string | :application/json | etc
      :congestion-control :drop | :block
      :priority :realtime | :interactive-high | :interactive-low | :data-high | :data | :data-low | :background
      :reliability :reliable | :best-effort}"
-  [opts]
-  (let [pub-opts (PublisherOptions.)]
-    (when-let [encoding (:encoding opts)]
-      ;; TODO: map keywords to Encoding constants
-      )
-    (when-let [cc (:congestion-control opts)]
-      ;; TODO: map to CongestionControl enum
-      )
-    (when-let [reliability (:reliability opts)]
-      ;; TODO: map to Reliability enum
-      )
-    pub-opts))
+  [{:keys [congestion-control encoding reliability] :as opts}]
+  (cond-> (PublisherOptions.)
+    encoding (.setEncoding (->encoding encoding))
+    congestion-control (.setCongestionControl (->congestion-control congestion-control))
+    reliability (.setReliability (->reliability reliability))))
 
 (defn publisher
   "Declare a publisher on a key expression.
-  
-  Returns a [[io.zenoh.pubsub.Publisher]] that can be used with `put!` multiple times.
+  Returns a [[io.zenoh.pubsub.Publisher]] that can be used with `put!`.
   Must be closed with [[close!]] or use [[with-publisher]].
   
   Options:
     {:encoding :zenoh/string
      :congestion-control :block
-     :reliability :reliable}
-  
-  Examples:
-    (publisher session 'demo/topic')
-    (publisher session 'demo/topic' {:reliability :reliable})"
+     :reliability :reliable}"
   ([^Session session key-expr]
    (publisher session key-expr nil))
   ([^Session session key-expr opts]
@@ -187,18 +206,14 @@
 
 (defn- put-options
   "Build PutOptions from Clojure map.
-  
   Accepts:
     {:encoding :text/plain | :application/json | etc
      :attachment 'metadata string' | byte-array}"
-  [opts]
+  [{:keys [encoding attachment] :as opts}]
   (when (seq opts)
-    (let [put-opts (PutOptions.)]
-      (when-let [enc (:encoding opts)]
-        (.setEncoding put-opts (->encoding enc)))
-      (when-let [att (:attachment opts)]
-        (.setAttachment put-opts (->zbytes att)))
-      put-opts)))
+    (doto (PutOptions.)
+      (.setEncoding (->encoding encoding))
+      (.setAttachment (->zbytes attachment)))))
 
 (defn- publisher-put! [^Publisher pub data opts]
   (let [zbytes (->zbytes data)
@@ -276,6 +291,19 @@
   (when (instance? Reply$Success reply)
     (when-let [sample (.getSample reply)] 
       (sample->map sample))))
+
+(defn- get-options
+  "Build [[io.zenoh.query.GetOptions]] from options map.
+  Accepts:
+    {:payload 'query data' | byte-array
+     :encoding :application/json | etc
+     :attachment 'metadata'}"
+  [{:keys [attachment encoding payload] :as opts}]
+  (when (seq opts)
+    (doto (GetOptions.)
+      (.setAttachment (->zbytes attachment))
+      (.setEncoding (->encoding encoding))
+      (.setPayload (->zbytes payload)))))
 
 (defn get!
   "Query data from Zenoh with a custom Handler.
