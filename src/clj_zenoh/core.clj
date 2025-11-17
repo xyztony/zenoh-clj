@@ -79,11 +79,11 @@
   [k]
   (cond
     (or (keyword? k) (symbol? k))
-    (let [ns (namespace k)
-          nm (name k)]
-      (if ns
-        (format "%s/%s" ns nm)
-        nm))
+    (let [key-namespace (namespace k)
+          key-name (name k)]
+      (if key-namespace
+        (format "%s/%s" key-namespace key-name)
+        key-name))
     :else (str k)))
 
 (defn ->key-expr
