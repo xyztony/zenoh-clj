@@ -2,21 +2,8 @@
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.core.async :as async :refer [go <! >! chan]]
             [clj-zenoh.core :as z]
-            [clj-zenoh.test.helpers :as h]))
-
-(defn- channel->sample-handler [ch]
-  (reify io.zenoh.handlers.Handler
-    (handle [_ sample]
-      (async/put! ch (z/sample->map sample)))
-    (receiver [_] ch)
-    (onClose [_] (async/close! ch))))
-
-(defn- channel->reply-handler [ch]
-  (reify io.zenoh.handlers.Handler
-    (handle [_ reply]
-      (async/put! ch (z/reply->map reply)))
-    (receiver [_] ch)
-    (onClose [_] (async/close! ch))))
+            [clj-zenoh.test.helpers :as h])
+  (:import [io.zenoh.query Query]))
 
 (use-fixtures :once h/with-shared-session)
 
@@ -51,7 +38,7 @@
     (let [session (h/test-session)
           ch (chan)]
       (with-open [sub (z/subscriber session :test/encoding
-                                    (channel->sample-handler ch))]
+                                    (h/channel-handler ch z/sample->map))]
         (z/with-publisher [pub (z/publisher session :test/encoding)]
           (z/put! pub "json data" {:encoding :application/json})
           (let [sample (h/<!!-with-timeout ch)]
@@ -62,7 +49,7 @@
     (let [session (h/test-session)
           ch (chan)]
       (with-open [sub (z/subscriber session :test/attachment
-                                    (channel->sample-handler ch))]
+                                    (h/channel-handler ch z/sample->map))]
         (z/with-publisher [pub (z/publisher session :test/attachment)]
           (z/put! pub "payload" {:attachment "metadata"})
           (let [sample (h/<!!-with-timeout ch)]
@@ -73,7 +60,7 @@
     (let [session (h/test-session)
           ch (chan)]
       (with-open [sub (z/subscriber session :test/both
-                                    (channel->sample-handler ch))]
+                                    (h/channel-handler ch z/sample->map))]
         (z/with-publisher [pub (z/publisher session :test/both)]
           (z/put! pub "csv data" {:encoding :text/csv
                                   :attachment "row:123"})
@@ -88,7 +75,7 @@
           [msg1 msg2] ["message 1" "message 2"]
           ch (chan)]
       (with-open [sub (z/subscriber
-                       session :test/callback-test (channel->sample-handler ch))]
+                       session :test/callback-test (h/channel-handler ch z/sample->map))]
         (z/put! session :test/callback-test msg1)
         (z/put! session :test/callback-test msg2)
         (let [m1 (:payload (h/<!!-with-timeout ch))
@@ -102,7 +89,7 @@
           ch (chan)
           result-ch (chan)]
       (with-open [sub (z/subscriber
-                       session :test/channel-test (channel->sample-handler ch))]
+                       session :test/channel-test (h/channel-handler ch z/sample->map))]
         (async/go
           (let [a (:payload (<! ch))
                 b (:payload (<! ch))]
@@ -120,7 +107,7 @@
           reply-ch (chan)]
       (with-open [sub (z/subscriber
                        session :test/to-delete
-                       (channel->sample-handler sample-ch))]
+                       (h/channel-handler sample-ch z/sample->map))]
         (z/put! session :test/to-delete "will be deleted")
         (z/delete! session :test/to-delete)
         (let [e1 (h/<!!-with-timeout sample-ch)
@@ -128,7 +115,7 @@
           (is (= "will be deleted" (:payload e1)))
           (is (= :put (:kind e1)))
           (is (= :delete (:kind e2))))
-        (z/get! session :test/to-delete (channel->reply-handler reply-ch))
+        (z/get! session :test/to-delete (h/channel-handler reply-ch z/reply->map))
         (is (nil? (h/<!!-with-timeout reply-ch)))
         (async/close! reply-ch)
         (async/close! (.getReceiver sub))
