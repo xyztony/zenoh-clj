@@ -4,17 +4,24 @@
 
 (comment
   (def session (z/open {:mode :client 
-                        :connect [7447]}))
+                        :connect ["tcp/192.168.50.106:7447"]}))
 
+  (def session (z/open {:mode :client 
+                        :connect {:endpoints ["tcp/192.168.50.106:7447"]}}))
+
+  (def session
+    (z/open
+     "{mode: \"client\", connect: {endpoints: [\"tcp/192.168.50.106:7447\"]}}"))
+  
   (z/session-info session)
   (z/connected? session)
   (z/close! session)
   (.isClosed session)
 
   (a/go 
-    (doseq [i (range 10)]
-      (a/<!! (a/timeout (* (inc i) 100)))
-      (z/put! session (format "demo/example/v4/test_%d" i)
+    (doseq [i (range 1000)]
+      #_(a/<!! (a/timeout (* (inc i) 100)))
+      (z/put! session (format "demo/example/v2/test_%d" i)
               {:some {:nested :data :crazy (range (inc i))}})))
   
   (def sub (z/subscriber session "demo/example/**"

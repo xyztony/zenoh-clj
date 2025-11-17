@@ -15,15 +15,25 @@
 (defn- config-from-map
   "Convert Clojure map to Zenoh Config.
   Accepts:
-  {:mode 'peer' | 'client' | 'router'
-   :connect [7447 ...]
-   :listen [7447 ...]}"
-  [config-map]
+  {:mode :peer | :client | :router
+   :connect {:endpoints [\"tcp/[::]:7447\" ...]}
+   :listen {:endpoints [\"tcp/[::]:7447\" ...]}}
+  
+  Or simplified form:
+  {:mode :peer
+   :connect [\"tcp/[::]:7447\" ...]
+   :listen [\"tcp/[::]:7447\" ...]}"
+  [{:keys [connect listen] :as config-map}]
   (cond
     (nil? config-map) (Config/loadDefault)
     (string? config-map) (Config/fromJson5 config-map)
     (map? config-map)
-    (let [json (json/write-json-str config-map)]
+    (let [normalized (cond-> config-map
+                       (sequential? connect)
+                       (assoc :connect {:endpoints connect})
+                       (sequential? listen)
+                       (assoc :listen {:endpoints listen}))
+          json (json/write-json-str normalized)]
       (Config/fromJson5 json))
     :else (Config/loadDefault)))
 
@@ -31,7 +41,10 @@
   "Open a Zenoh session.
   Config can be:
   - nil (uses default config)
-  - map with {:mode :peer/:client/:router, :connect [...], :listen [...]}
+  - map with {:mode :peer/:client/:router
+              :connect {:endpoints [\"tcp/[::]:7447\"]}
+              :listen {:endpoints [\"tcp/[::]:7447\"]}}
+  - simplified map {:mode :client :connect [\"tcp/[::]:7447\"]}
   - JSON5 string
   Returns a [[io.zenoh.Session]] object. Must be closed with [[close!]] or use [[with-session]]."
   ([]
