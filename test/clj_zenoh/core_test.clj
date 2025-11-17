@@ -120,3 +120,90 @@
         (async/close! reply-ch)
         (async/close! (.getReceiver sub))
         (.close sub)))))
+
+(h/deftest-with-timeout queryable-test
+  (testing "queryable receives query and sends reply"
+    (let [session (h/test-session)
+          reply-ch (chan)]
+      (with-open [queryable (z/queryable
+                             session :test/queryable
+                             (h/returning-handler
+                              (fn [query]
+                                (let [query-map (z/query->map query)]
+                                  (.reply query
+                                          (z/->key-expr (:key-expr query-map))
+                                          (str "response to " (:payload query-map)))))
+                              :ok))]
+        (z/get! session :test/queryable (h/channel-handler reply-ch z/reply->map))
+        (let [reply (h/<!!-with-timeout reply-ch)]
+          (is (some? reply))
+          (is (= "response to " (:payload reply))))
+        (async/close! reply-ch))))
+
+  (testing "queryable with selector parameters"
+    (let [session (h/test-session)
+          reply-ch (chan)]
+      (with-open [queryable (z/queryable
+                             session :test/params
+                             (h/returning-handler
+                              (fn [query]
+                                (let [query-map (z/query->map query)
+                                      params (or (:parameters query-map) {})]
+                                  (.reply query
+                                          (z/->key-expr (:key-expr query-map))
+                                          (str "params: " params))))
+                              :ok))]
+        (z/get! session "test/params?filter=active"
+                (h/channel-handler reply-ch z/reply->map))
+        (let [reply (h/<!!-with-timeout reply-ch)]
+          (is (some? reply))
+          (when reply
+            (is (re-find #"filter.*active" (:payload reply)))))
+        (async/close! reply-ch))))
+
+  (testing "queryable with query payload"
+    (let [session (h/test-session)
+          reply-ch (chan)]
+      (with-open [queryable (z/queryable
+                             session :test/with-payload
+                             (h/returning-handler
+                              (fn [query]
+                                (let [query-map (z/query->map query)]
+                                  (.reply query
+                                          (z/->key-expr (:key-expr query-map))
+                                          (str "received: " (:payload query-map)))))
+                              :ok))]
+        (z/get! session :test/with-payload
+                (h/channel-handler reply-ch z/reply->map)
+                {:payload "query data"})
+        (let [reply (h/<!!-with-timeout reply-ch)]
+          (is (some? reply))
+          (is (= "received: query data" (:payload reply))))
+        (async/close! reply-ch))))
+
+  (testing "queryable with all get options"
+    (let [session (h/test-session)
+          reply-ch (chan)]
+      (with-open [queryable (z/queryable
+                             session :test/full-options
+                             (h/returning-handler
+                              (fn [query]
+                                (let [query-map (z/query->map query)]
+                                  (.reply query
+                                          (z/->key-expr (:key-expr query-map))
+                                          (str "payload:" (:payload query-map)
+                                               " enc:" (:encoding query-map)
+                                               " att:" (:attachment query-map)))))
+                              :ok))]
+        (z/get! session :test/full-options
+                (h/channel-handler reply-ch z/reply->map)
+                {:payload "test-payload"
+                 :encoding :application/json
+                 :attachment "meta-data"})
+        (let [reply (h/<!!-with-timeout reply-ch)]
+          (is (some? reply))
+          (when reply
+            (is (re-find #"payload:test-payload" (:payload reply)))
+            (is (re-find #"enc:application/json" (:payload reply)))
+            (is (re-find #"att:meta-data" (:payload reply)))))
+        (async/close! reply-ch)))))

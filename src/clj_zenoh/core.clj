@@ -7,18 +7,17 @@
            [io.zenoh.handlers Callback Handler]
            [io.zenoh.keyexpr KeyExpr]
            [io.zenoh.pubsub Publisher PublisherOptions PutOptions Subscriber]
-           [io.zenoh.query Reply Reply$Success]
            [io.zenoh.qos CongestionControl Reliability]
+           [io.zenoh.query GetOptions Query Queryable QueryableOptions Reply Reply$Success Selector]
            [io.zenoh.sample Sample]
            [org.apache.commons.net.ntp TimeStamp]))
 
 (defn- config-from-map
   "Convert Clojure map to Zenoh Config.
-  
   Accepts:
-    {:mode 'peer' | 'client' | 'router'
-     :connect [7447 ...]
-     :listen [7447 ...]}"
+  {:mode 'peer' | 'client' | 'router'
+   :connect [7447 ...]
+   :listen [7447 ...]}"
   [config-map]
   (cond
     (nil? config-map) (Config/loadDefault)
@@ -30,12 +29,10 @@
 
 (defn open
   "Open a Zenoh session.
-  
   Config can be:
-    - nil (uses default config)
-    - map with {:mode :peer/:client/:router, :connect [...], :listen [...]}
-    - JSON5 string
-  
+  - nil (uses default config)
+  - map with {:mode :peer/:client/:router, :connect [...], :listen [...]}
+  - JSON5 string
   Returns a [[io.zenoh.Session]] object. Must be closed with [[close!]] or use [[with-session]]."
   ([]
    (open nil))
@@ -55,11 +52,10 @@
 
 (defn session-info
   "Get session information including connected peers and routers.
-  
   Returns a map with:
-    {:zid <ZenohId>           ; Session's Zenoh ID
-     :peers [<ZenohId> ...]   ; Connected peers
-     :routers [<ZenohId> ...]} ; Connected routers"
+  {:zid <ZenohId>            ; Session's Zenoh ID
+   :peers [<ZenohId> ...]    ; Connected peers
+   :routers [<ZenohId> ...]} ; Connected routers"
   [^Session session]
   (when (and session (not (closed? session)))
     (let [info (.info session)]
@@ -178,10 +174,10 @@
 (defn- publisher-options
   "Build [[io.zenoh.pubsub.PublisherOptions]] from options map.
   Accepts:
-    {:encoding :zenoh/string | :application/json | etc
-     :congestion-control :drop | :block
-     :priority :realtime | :interactive-high | :interactive-low | :data-high | :data | :data-low | :background
-     :reliability :reliable | :best-effort}"
+  {:encoding :zenoh/string | :application/json | etc
+   :congestion-control :drop | :block
+   :priority :realtime | :interactive-high | :interactive-low | :data-high | :data | :data-low | :background
+   :reliability :reliable | :best-effort}"
   [{:keys [congestion-control encoding reliability] :as opts}]
   (cond-> (PublisherOptions.)
     encoding (.setEncoding (->encoding encoding))
@@ -192,11 +188,10 @@
   "Declare a publisher on a key expression.
   Returns a [[io.zenoh.pubsub.Publisher]] that can be used with `put!`.
   Must be closed with [[close!]] or use [[with-publisher]].
-  
   Options:
-    {:encoding :zenoh/string
-     :congestion-control :block
-     :reliability :reliable}"
+  {:encoding :zenoh/string
+   :congestion-control :block
+   :reliability :reliable}"
   ([^Session session key-expr]
    (publisher session key-expr nil))
   ([^Session session key-expr opts]
@@ -207,8 +202,8 @@
 (defn- put-options
   "Build PutOptions from Clojure map.
   Accepts:
-    {:encoding :text/plain | :application/json | etc
-     :attachment 'metadata string' | byte-array}"
+  {:encoding :text/plain | :application/json | etc
+   :attachment 'metadata string' | byte-array}"
   [{:keys [encoding attachment] :as opts}]
   (when (seq opts)
     (doto (PutOptions.)
@@ -224,18 +219,12 @@
 
 (defn put!
   "Publish data with a [[io.zenoh.pubsub.Session]]
-   or [[io.zenoh.pubsub.Publisher]].
-  
-  Examples:
-    (put! session 'demo/key' 'value')
-    (put! publisher 'value')
-    (put! publisher 'value' {:attachment 'metadata'})"
+   or [[io.zenoh.pubsub.Publisher]]."
   ([session-or-publisher data]
    (put! session-or-publisher data nil))
   ([session-or-publisher key-or-data opts-or-data]
    (if (instance? Publisher session-or-publisher)
      (publisher-put! session-or-publisher key-or-data (or opts-or-data {}))
-     
      (let [^Session session session-or-publisher
            key-expr (->key-expr key-or-data)
            data opts-or-data
@@ -247,31 +236,15 @@
      (.put session ke zbytes))))
 
 (defmacro with-publisher
-  "Execute body with a publisher in a [[with-open]] try expression.
-  
-  Example:
-    (with-publisher [pub (publisher session 'demo/topic')]
-      (put! pub 'message 1')
-      (put! pub 'message 2'))"
+  "Execute body with a publisher in a [[with-open]] try expression."
   [[binding publisher-expr] & body]
   `(with-open [~binding ~publisher-expr]
      ~@body))
 
 (defn subscriber
   "Declare a subscriber on a key expression with a custom Handler.
-  
   The Handler must implement [[io.zenoh.handlers.Handler]] interface.
-  
-  Returns [[io.zenoh.pubsub.Subscriber]]. Must be closed with .close or use with-open.
-
-  Example:
-    (let [samples (atom [])]
-      (subscriber session 'demo/**'
-        (reify Handler
-          (handle [_ sample]
-            (swap! samples conj (sample->map sample)))
-          (receiver [_] samples)
-          (onClose [_] nil))))"
+  Returns [[io.zenoh.pubsub.Subscriber]]. Must be closed with .close or use with-open."
   [^Session session key-expr ^Handler handler]
   (let [ke (->key-expr key-expr)]
     (.declareSubscriber session ke handler)))
@@ -284,7 +257,6 @@
    (let [ke (->key-expr key-expr)]
      (.delete session ke))))
 
-
 (defn reply->map
   "Convert [[io.zenoh.query.Reply]] to a clojure map"
   [^Reply reply]
@@ -292,12 +264,19 @@
     (when-let [sample (.getSample reply)] 
       (sample->map sample))))
 
+(defn- ->selector
+  "Convert string to [[io.zenoh.query.Selector]]."
+  [selector-str]
+  (if (instance? Selector selector-str)
+    selector-str
+    (Selector/tryFrom (normalize-key-expr selector-str))))
+
 (defn- get-options
   "Build [[io.zenoh.query.GetOptions]] from options map.
   Accepts:
-    {:payload 'query data' | byte-array
-     :encoding :application/json | etc
-     :attachment 'metadata'}"
+  {:payload 'query data' | byte-array
+   :encoding :application/json | etc
+   :attachment 'metadata'}"
   [{:keys [attachment encoding payload] :as opts}]
   (when (seq opts)
     (doto (GetOptions.)
@@ -307,21 +286,55 @@
 
 (defn get!
   "Query data from Zenoh with a custom Handler.
-  
   The Handler must implement [[io.zenoh.handlers.Handler]] interface.
+  Returns the value returned by the Handler's receiver().
+  The selector can include parameters: 'key/expr?param1=value1;param2=value2'
   
-  Returns whatever the Handler's receiver() method returns.
-  
-  Example:
-    (let [replies (atom [])]
-      (get! session 'demo/**'
-        (reify Handler
-          (handle [_ reply]
-            (when-let [reply-map (reply->map reply)]
-              (swap! replies conj reply-map)))
-          (receiver [_] replies)
-          (onClose [_] nil)))
-      @replies)"
-  [^Session session key-expr ^Handler handler]
-  (let [ke (->key-expr key-expr)]
-    (.get session ke handler)))
+  Options:
+  {:payload 'query data'
+   :encoding :application/json
+   :attachment 'metadata'}"
+  ([^Session session selector ^Handler handler]
+   (get! session selector handler nil))
+  ([^Session session selector ^Handler handler opts]
+   (let [sel (->selector selector)
+         get-opts (get-options opts)]
+     (if get-opts
+       (.get session sel handler get-opts)
+       (.get session sel handler)))))
+
+(defn query->map
+  "Convert [[io.zenoh.query.Query]] to a clojure map"
+  [^Query query]
+  (when query
+    (let [selector (.getSelector query)
+          params (.getParameters selector)]
+      {:key-expr (str (.getKeyExpr query))
+       :selector (str selector)
+       :parameters (when params (.toMap params))
+       :payload (when-let [p (.getPayload query)]
+                  (zbytes->str p))
+       :encoding (when-let [e (.getEncoding query)]
+                   (encoding->str e))
+       :attachment (when-let [att (.getAttachment query)]
+                     (zbytes->str att))})))
+
+(defn- queryable-options
+  "Build [[io.zenoh.query.QueryableOptions]] from options map.
+  Accepts: {:complete true | false}"
+  [{:keys [complete] :as _opts}]
+  (doto (QueryableOptions.)
+    (.setComplete (boolean complete))))
+
+(defn queryable
+  "Declare a queryable on a key expression with a custom Handler.
+  The Handler must implement [[io.zenoh.handlers.Handler]] interface.
+  Handler's handle() method receives [[io.zenoh.query.Query]] objects.
+  Returns [[io.zenoh.query.Queryable]]. Must be closed with .close or use with-open.
+  Options: {:complete true}  ; Signal this queryable provides complete/exhaustive information"
+  ([^Session session key-expr ^Handler handler]
+   (queryable session key-expr handler nil))
+  ([^Session session key-expr ^Handler handler opts]
+   (let [ke (->key-expr key-expr)
+         q-opts (queryable-options opts)]
+     (.declareQueryable session ke handler q-opts))))
