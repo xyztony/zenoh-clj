@@ -365,15 +365,30 @@
   (when query
     (let [selector (.getSelector query)
           params (.getParameters selector)]
-      {:key-expr (str (.getKeyExpr query))
-       :selector (str selector)
-       :parameters (when params (.toMap params))
-       :payload (when-let [p (.getPayload query)]
-                  (zbytes->str p))
-       :encoding (when-let [e (.getEncoding query)]
-                   (encoding->str e))
-       :attachment (when-let [att (.getAttachment query)]
-                     (zbytes->str att))})))
+      (with-meta
+        {:key-expr (str (.getKeyExpr query))
+         :selector (str selector)
+         :parameters (when params (.toMap params))
+         :payload (when-let [p (.getPayload query)]
+                    (zbytes->str p))
+         :encoding (when-let [e (.getEncoding query)]
+                     (encoding->str e))
+         :attachment (when-let [att (.getAttachment query)]
+                       (zbytes->str att))}
+        {:zenoh/query query}))))
+
+(defn reply!
+  "Reply to a query.
+  Target can be a [[io.zenoh.query.Query]] object or a map returned by [[query->map]]."
+  ([target key-expr data]
+   (let [^Query query (if (map? target)
+                        (:zenoh/query (meta target))
+                        target)]
+     (when query
+       (let [ke (->key-expr key-expr)
+             zb (->zbytes data)]
+         (.reply ^Query query ^KeyExpr ke ^ZBytes zb))))))
+
 
 (defn on-query [f]
   (handler (fn [^Query q] (f (query->map q)))))
