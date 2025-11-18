@@ -14,7 +14,7 @@
 
 (set! *warn-on-reflection* true)
 
-(defn- config-from-map
+(defn config-from-map
   "Convert Clojure map to Zenoh Config.
   Accepts:
   {:mode :peer | :client | :router
