@@ -1,7 +1,9 @@
 (ns clj-zenoh.liveliness
-  (:require [clj-zenoh.core :as core])
+  (:require [clj-zenoh.core :as core]
+            [clj-zenoh.utils :as utils])
   (:import [io.zenoh Session]
            [io.zenoh.handlers Handler]
+           [io.zenoh.keyexpr KeyExpr]
            [io.zenoh.liveliness Liveliness LivelinessToken LivelinessSubscriberOptions]
            [java.time Duration]))
 
@@ -13,7 +15,7 @@
   Returns a [[io.zenoh.liveliness.LivelinessToken]].
   Must be closed with .close or use [[with-token]]."
   [^Session session key-expr]
-  (let [key-expr (core/->key-expr key-expr)]
+  (let [key-expr (utils/->key-expr key-expr)]
     (.declareToken (.liveliness session) key-expr)))
 
 (defmacro with-token
@@ -40,12 +42,12 @@
    (subscriber session key-expr handler-or-fn nil))
   ([^Session session key-expr handler-or-fn opts]
    (let [liveliness (.liveliness session)
-         key-expr (core/->key-expr key-expr)
+         key-expr (utils/->key-expr key-expr)
          handler (if (fn? handler-or-fn) (core/on-sample handler-or-fn) handler-or-fn)
          sub-opts (subscriber-options opts)]
      (if sub-opts
-       (.declareSubscriber liveliness key-expr ^Handler handler ^LivelinessSubscriberOptions sub-opts)
-       (.declareSubscriber liveliness key-expr ^Handler handler)))))
+       (.declareSubscriber ^Liveliness liveliness ^KeyExpr key-expr ^Handler handler ^LivelinessSubscriberOptions sub-opts)
+       (.declareSubscriber ^Liveliness liveliness ^KeyExpr key-expr ^Handler handler)))))
 
 (defn get!
   "Query liveliness tokens.
@@ -59,10 +61,10 @@
    (get! session key-expr handler-or-fn nil))
   ([^Session session key-expr handler-or-fn opts]
    (let [liveliness (.liveliness session)
-         key-expr (core/->key-expr key-expr)
+         key-expr (utils/->key-expr key-expr)
          handler (if (fn? handler-or-fn) (core/on-reply handler-or-fn) handler-or-fn)
          timeout (when-let [ms (:timeout-ms opts)]
                    (Duration/ofMillis ms))]
      (if timeout
-       (.get liveliness key-expr ^Handler handler timeout)
-       (.get liveliness key-expr ^Handler handler)))))
+       (.get ^Liveliness liveliness ^KeyExpr key-expr ^Handler handler ^Duration timeout)
+       (.get ^Liveliness liveliness ^KeyExpr key-expr ^Handler handler)))))

@@ -1,7 +1,8 @@
 (ns clj-zenoh.core
   "Clojure wrapper for Zenoh Java wrapper/API."
   (:require [charred.api :as json]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [clj-zenoh.utils :as utils])
   (:import [io.zenoh Config Session Zenoh]
            [io.zenoh.bytes Encoding ZBytes]
            [io.zenoh.handlers Callback Handler]
@@ -88,84 +89,6 @@
   `(with-open [~binding (open ~config)]
      ~@body))
 
-(defn- normalize-key-expr
-  "Convert keyword/symbol to string without leading colon.
-  Keywords: :test/key -> 'test/key', :key -> 'key'
-  Symbols: test/key -> 'test/key'
-  Strings: passed through"
-  [k]
-  (cond
-    (or (keyword? k) (symbol? k))
-    (if-let [key-namespace (namespace k)]
-      (str key-namespace "/" (name k))
-      (name k))
-    :else (str k)))
-
-(defn- opt->val [x]
-  (if (instance? java.util.Optional x)
-    (.orElse ^java.util.Optional x nil)
-    x))
-
-(defn ^KeyExpr ->key-expr
-  "Convert string to [[io.zenoh.KeyExpr]]."
-  [key-expr]
-  (if (instance? KeyExpr key-expr)
-    key-expr
-    (let [val (-> (normalize-key-expr key-expr)
-                  (KeyExpr/tryFrom)
-                  (opt->val))]
-      (or val (throw (ex-info "Invalid key expression" {:value key-expr}))))))
-
-(defn- ->zbytes
-  "Convert data to [[io.zenoh.bytes.ZBytes]]."
-  [data]
-  (cond
-    (instance? ZBytes data) data
-    (string? data) (ZBytes/from ^String data)
-    (bytes? data) (ZBytes/from ^bytes data)
-    :else (ZBytes/from (str data))))
-
-(defn- zbytes->str
-  "Convert [[io.zenoh.bytes.ZBytes]] to a string."
-  [^ZBytes zbytes]
-  (when zbytes (.toString zbytes)))
-
-(def ^:private encoding-map
-  "Map of keywords to [[io.zenoh.bytes.Encoding]] constants"
-  {:zenoh/string Encoding/ZENOH_STRING
-   :zenoh/bytes Encoding/ZENOH_BYTES
-   :text/plain Encoding/TEXT_PLAIN
-   :text/json Encoding/TEXT_JSON
-   :text/csv Encoding/TEXT_CSV
-   :text/html Encoding/TEXT_HTML
-   :text/xml Encoding/TEXT_XML
-   :application/json Encoding/APPLICATION_JSON
-   :application/xml Encoding/APPLICATION_XML
-   :application/octet-stream Encoding/APPLICATION_OCTET_STREAM})
-
-(def ^:private encoding-reverse-map
-  ;; TODO utils ns + get rid of this def
-  (into {} (map (fn [[k v]] [v k]) encoding-map)))
-
-(defn- ->encoding
-  "Convert keyword to [[io.zenoh.bytes.Encoding]]."
-  [enc]
-  (cond
-    (instance? Encoding enc) enc
-    (keyword? enc) (get encoding-map enc)
-    :else nil))
-
-(defn- encoding->str
-  "Convert [[io.zenoh.bytes.Encoding]] to string.
-  Maps encoding object to name since description is lost across JNI."
-  [^Encoding enc]
-  (when enc
-    (if-let [kw (get encoding-reverse-map enc)]
-      (let [ns-part (namespace kw)
-            name-part (name kw)]
-        (str ns-part "/" name-part))
-      (.toString enc))))
-
 (defn timestamp->date
   "Convert Zenoh TimeStamp to java.util.Date."
   [^TimeStamp ts]
@@ -181,35 +104,17 @@
   []
   (TimeStamp/getCurrentTime))
 
-(defn- ->enum [^Class enum-cls kw]
-  (when kw
-    (try
-      (Enum/valueOf enum-cls (-> (name kw)
-                                 (str/upper-case)
-                                 (str/replace "-" "_")))
-      (catch IllegalArgumentException _ nil))))
-
-(defn- ->congestion-control
-  "Convert keyword to [[io.zenoh.qos.CongestionControl]]."
-  [cc]
-  (->enum CongestionControl cc))
-
-(defn- ->reliability
-  "Convert keyword to [[io.zenoh.qos.Reliability]]."
-  [rel]
-  (->enum Reliability rel))
-
 (defn sample->map
   "Convert [[io.zenoh.sample.Sample]] to a clojure map"
   [^Sample sample]
   (when sample
     {:key-expr (.toString (.getKeyExpr sample))
-     :payload (zbytes->str (.getPayload sample))
-     :encoding (encoding->str (.getEncoding sample))
+     :payload (utils/zbytes->str (.getPayload sample))
+     :encoding (utils/encoding->str (.getEncoding sample))
      :timestamp (.getTimestamp sample)
      :kind (keyword (str/lower-case (.getKind sample)))
      :attachment (when-let [att (.getAttachment sample)]
-                   (zbytes->str att))}))
+                   (utils/zbytes->str att))}))
 
 (defn- ^PublisherOptions publisher-options
   "Build [[io.zenoh.pubsub.PublisherOptions]] from options map.
@@ -221,9 +126,9 @@
   [{:keys [congestion-control encoding reliability] :as opts}]
   (when (seq opts)
     (let [^PublisherOptions po (PublisherOptions.)]
-      (when encoding (.setEncoding po (->encoding encoding)))
-      (when congestion-control (.setCongestionControl po (->congestion-control congestion-control)))
-      (when reliability (.setReliability po (->reliability reliability)))
+      (when encoding (.setEncoding po (utils/->encoding encoding)))
+      (when congestion-control (.setCongestionControl po (utils/->congestion-control congestion-control)))
+      (when reliability (.setReliability po (utils/->reliability reliability)))
       po)))
 
 (defn publisher
@@ -237,7 +142,7 @@
   ([^Session session key-expr]
    (publisher session key-expr nil))
   ([^Session session key-expr opts]
-   (let [ke (->key-expr key-expr)
+   (let [ke (utils/->key-expr key-expr)
          ^PublisherOptions pub-opts (publisher-options opts)]
      (if pub-opts
        (.declarePublisher session ke pub-opts)
@@ -251,12 +156,12 @@
   [{:keys [encoding attachment] :as opts}]
   (when (seq opts)
     (let [^PutOptions po (PutOptions.)]
-      (when encoding (.setEncoding po (->encoding encoding)))
-      (when attachment (.setAttachment po ^ZBytes (->zbytes attachment)))
+      (when encoding (.setEncoding po (utils/->encoding encoding)))
+      (when attachment (.setAttachment po ^ZBytes (utils/->zbytes attachment)))
       po)))
 
 (defn- publisher-put! [^Publisher pub data opts]
-  (let [^ZBytes zbytes (->zbytes data)
+  (let [^ZBytes zbytes (utils/->zbytes data)
         ^PutOptions put-opts (put-options opts)]
     (if put-opts
       (.put pub zbytes put-opts)
@@ -271,17 +176,17 @@
    (if (instance? Publisher session-or-publisher)
      (publisher-put! session-or-publisher key-or-data (or opts-or-data {}))
      (let [^Session session session-or-publisher
-           key-expr (->key-expr key-or-data)
+           key-expr (utils/->key-expr key-or-data)
            data opts-or-data
-           ^ZBytes zbytes (->zbytes data)]
-       (.put session key-expr zbytes))))
-  ([^Session session key-expr data opts]
-   (let [ke (->key-expr key-expr)
-         ^ZBytes zbytes (->zbytes data)
+           ^ZBytes zbytes (utils/->zbytes data)]
+       (.put ^Session session ^KeyExpr key-expr ^ZBytes zbytes))))
+  ([^Session session key-expression data opts]
+   (let [^KeyExpr key-expr (utils/->key-expr key-expression)
+         ^ZBytes zbytes (utils/->zbytes data)
          ^PutOptions put-opts (put-options opts)]
      (if put-opts
-       (.put session ke zbytes put-opts)
-       (.put session ke zbytes)))))
+       (.put ^Session session ^KeyExpr key-expr ^ZBytes zbytes ^PutOptions put-opts)
+       (.put ^Session session ^KeyExpr key-expr ^ZBytes zbytes)))))
 
 (defmacro with-publisher
   "Execute body with a publisher in a [[with-open]] try expression."
@@ -307,15 +212,15 @@
   Handler must implement [[io.zenoh.handlers.Handler]].
   If a function is provided, it is wrapped with [[on-sample]].
   Returns [[io.zenoh.pubsub.Subscriber]]. Must be closed with .close or use with-open."
-  [^Session session key-expr handler-or-fn]
-  (let [ke (->key-expr key-expr)
-        h (if (fn? handler-or-fn) (on-sample handler-or-fn) handler-or-fn)]
-    (.declareSubscriber session ke ^Handler h)))
+  [^Session session key-expression handler-or-fn]
+  (let [key-expr (utils/->key-expr key-expression)
+        handler (if (fn? handler-or-fn) (on-sample handler-or-fn) handler-or-fn)]
+    (.declareSubscriber ^Session session ^KeyExpr key-expr ^Handler handler)))
 
 (defn delete!
   "Delete a key from Zenoh."
   ([^Session session key-expr]
-   (let [ke (->key-expr key-expr)]
+   (let [ke (utils/->key-expr key-expr)]
      (.delete session ke))))
 
 (defn reply->map
@@ -331,16 +236,6 @@
                (when-let [m (reply->map r)]
                  (f m))))))
 
-(defn ^Selector ->selector
-  "Convert string to [[io.zenoh.query.Selector]]."
-  [selector-str]
-  (if (instance? Selector selector-str)
-    selector-str
-    (let [val (-> (normalize-key-expr selector-str)
-                  (Selector/tryFrom)
-                  (opt->val))]
-      (or val (throw (ex-info "Invalid selector" {:value selector-str}))))))
-
 (defn- ^GetOptions get-options
   "Build [[io.zenoh.query.GetOptions]] from options map.
   Accepts:
@@ -350,9 +245,9 @@
   [{:keys [attachment encoding payload] :as opts}]
   (when (seq opts)
     (let [^GetOptions go (GetOptions.)]
-      (when attachment (.setAttachment go ^ZBytes (->zbytes attachment)))
-      (when encoding (.setEncoding go (->encoding encoding)))
-      (when payload (.setPayload go ^ZBytes (->zbytes payload)))
+      (when attachment (.setAttachment go ^ZBytes (utils/->zbytes attachment)))
+      (when encoding (.setEncoding go (utils/->encoding encoding)))
+      (when payload (.setPayload go ^ZBytes (utils/->zbytes payload)))
       go)))
 
 (defn get!
@@ -369,12 +264,12 @@
   ([^Session session selector handler-or-fn]
    (get! session selector handler-or-fn nil))
   ([^Session session selector handler-or-fn opts]
-   (let [sel (->selector selector)
-         h (if (fn? handler-or-fn) (on-reply handler-or-fn) handler-or-fn)
+   (let [sel (utils/->selector selector)
+         handler (if (fn? handler-or-fn) (on-reply handler-or-fn) handler-or-fn)
          ^GetOptions get-opts (get-options opts)]
      (if get-opts
-       (.get session sel ^Handler h get-opts)
-       (.get session sel ^Handler h)))))
+       (.get ^Session session ^Selector sel ^Handler handler ^GetOptions get-opts)
+       (.get ^Session session ^Selector sel ^Handler handler)))))
 
 (defn query->map
   "Convert [[io.zenoh.query.Query]] to a clojure map"
@@ -387,24 +282,24 @@
          :selector (str selector)
          :parameters (when params (.toMap params))
          :payload (when-let [p (.getPayload query)]
-                    (zbytes->str p))
+                    (utils/zbytes->str p))
          :encoding (when-let [e (.getEncoding query)]
-                     (encoding->str e))
+                     (utils/encoding->str e))
          :attachment (when-let [att (.getAttachment query)]
-                       (zbytes->str att))}
+                       (utils/zbytes->str att))}
         {:zenoh/query query}))))
 
 (defn reply!
   "Reply to a query.
   Target can be a [[io.zenoh.query.Query]] object or a map returned by [[query->map]]."
-  ([target key-expr data]
+  ([target key-expression data]
    (let [^Query query (if (map? target)
                         (:zenoh/query (meta target))
                         target)]
      (when query
-       (let [ke (->key-expr key-expr)
-             zb (->zbytes data)]
-         (.reply ^Query query ^KeyExpr ke ^ZBytes zb))))))
+       (let [key-expr (utils/->key-expr key-expression)
+             zbytes (utils/->zbytes data)]
+         (.reply ^Query query ^KeyExpr key-expr ^ZBytes zbytes))))))
 
 
 (defn on-query [f]
@@ -414,10 +309,8 @@
   "Build [[io.zenoh.query.QueryableOptions]] from options map.
   Accepts: {:complete true | false}"
   [{:keys [complete] :as opts}]
-  (when (seq opts)
-    (let [^QueryableOptions qo (QueryableOptions.)]
-      (when (some? complete) (.setComplete qo (boolean complete)))
-      qo)))
+  (doto (QueryableOptions.)
+    (.setComplete (boolean complete))))
 
 (defn queryable
   "Declare a queryable on a key expression with a custom Handler or function.
@@ -425,12 +318,12 @@
   If a function is provided, it is wrapped with [[on-query]].
   Returns [[io.zenoh.query.Queryable]]. Must be closed with .close or use with-open.
   Options: {:complete true}  ; Signal this queryable provides complete/exhaustive information"
-  ([^Session session key-expr handler-or-fn]
-   (queryable session key-expr handler-or-fn nil))
-  ([^Session session key-expr handler-or-fn opts]
-   (let [ke (->key-expr key-expr)
-         h (if (fn? handler-or-fn) (on-query handler-or-fn) handler-or-fn)
-         ^QueryableOptions q-opts (queryable-options opts)]
-     (if q-opts
-       (.declareQueryable session ke ^Handler h q-opts)
-       (.declareQueryable session ke ^Handler h)))))
+  ([^Session session key-expression handler-or-fn]
+   (queryable session key-expression handler-or-fn nil))
+  ([^Session session key-expression handler-or-fn opts]
+   (let [key-expr (utils/->key-expr key-expression)
+         handler (if (fn? handler-or-fn) (on-query handler-or-fn) handler-or-fn)
+         ^QueryableOptions queryable-opts (queryable-options opts)]
+     (if queryable-opts
+       (.declareQueryable ^Session session ^KeyExpr key-expr ^Handler handler ^QueryableOptions queryable-opts)
+       (.declareQueryable ^Session session ^KeyExpr key-expr ^Handler handler)))))
