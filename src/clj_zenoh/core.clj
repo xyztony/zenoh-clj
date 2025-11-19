@@ -10,6 +10,8 @@
            [io.zenoh.qos CongestionControl Reliability]
            [io.zenoh.query GetOptions Query Queryable QueryableOptions Reply Reply$Success Selector]
            [io.zenoh.sample Sample]
+           [java.time Instant]
+           [java.util Date]
            [org.apache.commons.net.ntp TimeStamp]))
 
 (set! *warn-on-reflection* true)
@@ -163,6 +165,21 @@
             name-part (name kw)]
         (str ns-part "/" name-part))
       (.toString enc))))
+
+(defn timestamp->date
+  "Convert Zenoh TimeStamp to java.util.Date."
+  [^TimeStamp ts]
+  (when ts (.getDate ts)))
+
+(defn timestamp->instant
+  "Convert Zenoh TimeStamp to java.time.Instant."
+  [^TimeStamp ts]
+  (when ts (Instant/ofEpochMilli (.getTime ts))))
+
+(defn current-timestamp
+  "Get current time as Zenoh TimeStamp (an apache commons ntp TimeStamp)."
+  []
+  (TimeStamp/getCurrentTime))
 
 (defn- ->enum [^Class enum-cls kw]
   (when kw
