@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.core.async :as async :refer [go <! >! chan]]
             [clj-zenoh.core :as z]
+            [clj-zenoh.utils :as utils]
             [clj-zenoh.test.helpers :as h])
   (:import [io.zenoh.query Query]))
 
@@ -131,7 +132,7 @@
                               (fn [query]
                                 (let [query-map (z/query->map query)]
                                   (.reply query
-                                          (z/->key-expr (:key-expr query-map))
+                                          (utils/->key-expr (:key-expr query-map))
                                           (str "response to " (:payload query-map)))))
                               :ok))]
         (z/get! session :test/queryable (h/channel-handler reply-ch z/reply->map))
@@ -150,7 +151,7 @@
                                 (let [query-map (z/query->map query)
                                       params (or (:parameters query-map) {})]
                                   (.reply query
-                                          (z/->key-expr (:key-expr query-map))
+                                          (utils/->key-expr (:key-expr query-map))
                                           (str "params: " params))))
                               :ok))]
         (z/get! session "test/params?filter=active"
@@ -170,7 +171,7 @@
                               (fn [query]
                                 (let [query-map (z/query->map query)]
                                   (.reply query
-                                          (z/->key-expr (:key-expr query-map))
+                                          (utils/->key-expr (:key-expr query-map))
                                           (str "received: " (:payload query-map)))))
                               :ok))]
         (z/get! session :test/with-payload
@@ -190,7 +191,7 @@
                               (fn [query]
                                 (let [query-map (z/query->map query)]
                                   (.reply query
-                                          (z/->key-expr (:key-expr query-map))
+                                          (utils/->key-expr (:key-expr query-map))
                                           (str "payload:" (:payload query-map)
                                                " enc:" (:encoding query-map)
                                                " att:" (:attachment query-map)))))
