@@ -1,7 +1,7 @@
 (ns clj-zenoh.utils
   "Internal utilities for clj-zenoh."
   (:require [clojure.string :as str])
-  (:import [io.zenoh.keyexpr KeyExpr]
+  (:import [io.zenoh.keyexpr KeyExpr SetIntersectionLevel]
            [io.zenoh.bytes Encoding ZBytes]
            [io.zenoh.qos CongestionControl Reliability Priority]
            [io.zenoh.query Selector QueryTarget ConsolidationMode]))
@@ -118,12 +118,66 @@
   [mode]
   (->enum ConsolidationMode mode))
 
+(defn ->intersection-level
+  "Convert keyword to [[io.zenoh.keyexpr.SetIntersectionLevel]]."
+  [level]
+  (->enum SetIntersectionLevel level))
+
 (defn ^Selector ->selector
-  "Convert string to [[io.zenoh.query.Selector]]."
-  [selector-str]
-  (if (instance? Selector selector-str)
-    selector-str
-    (let [val (-> (normalize-key-expr selector-str)
-                  (Selector/tryFrom)
-                  (opt->val))]
-      (or val (throw (ex-info "Invalid selector" {:value selector-str}))))))
+   "Convert string to [[io.zenoh.query.Selector]]."
+   [selector-str]
+   (if (instance? Selector selector-str)
+     selector-str
+     (let [val (-> (normalize-key-expr selector-str)
+                   (Selector/tryFrom)
+                   (opt->val))]
+       (or val (throw (ex-info "Invalid selector" {:value selector-str}))))))
+
+(def intersection-level-reverse-map
+   (into {}
+         (map (fn [k] [(->intersection-level k) k])
+              [:disjoint :intersects :includes :equals])))
+
+
+(defn key-intersects?
+  "Check if key expression `k1` intersects with `k2`.
+   Accepts strings, keywords, or KeyExpr objects."
+  [k1 k2]
+  (let [^KeyExpr k1-obj (if (instance? KeyExpr k1) k1 (->key-expr k1))
+        ^KeyExpr k2-obj (if (instance? KeyExpr k2) k2 (->key-expr k2))
+        close-k1? (not (identical? k1 k1-obj))
+        close-k2? (not (identical? k2 k2-obj))]
+    (try
+      (.intersects k1-obj k2-obj)
+      (finally
+        (when close-k1? (.close k1-obj))
+        (when close-k2? (.close k2-obj))))))
+
+(defn key-includes?
+  "Check if key expression `k1` includes `k2`.
+   Accepts strings, keywords, or KeyExpr objects."
+  [k1 k2]
+  (let [^KeyExpr k1-obj (if (instance? KeyExpr k1) k1 (->key-expr k1))
+        ^KeyExpr k2-obj (if (instance? KeyExpr k2) k2 (->key-expr k2))
+        close-k1? (not (identical? k1 k1-obj))
+        close-k2? (not (identical? k2 k2-obj))]
+    (try
+      (.includes k1-obj k2-obj)
+      (finally
+        (when close-k1? (.close k1-obj))
+        (when close-k2? (.close k2-obj))))))
+
+(defn key-relation
+   "Return relationship between `k1` and `k2` as a keyword:
+    :disjoint, :intersects, :includes, or :equals.
+    Accepts strings, keywords, or KeyExpr objects."
+   [k1 k2]
+   (let [^KeyExpr k1-obj (if (instance? KeyExpr k1) k1 (->key-expr k1))
+         ^KeyExpr k2-obj (if (instance? KeyExpr k2) k2 (->key-expr k2))
+         close-k1? (not (identical? k1 k1-obj))
+         close-k2? (not (identical? k2 k2-obj))]
+     (try
+       (get intersection-level-reverse-map (.relationTo k1-obj k2-obj))
+       (finally
+         (when close-k1? (.close k1-obj))
+         (when close-k2? (.close k2-obj))))))
