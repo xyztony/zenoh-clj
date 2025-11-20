@@ -29,13 +29,14 @@
    :timeout <Duration>  ; e.g., (java.time.Duration/ofMillis 1000)
    :express true | false}"
   [{:keys [target consolidation-mode congestion-control priority timeout express] :as opts}]
-  (cond-> (QuerierOptions.)
-    target (.setTarget (utils/->query-target target))
-    consolidation-mode (.setConsolidationMode (utils/->consolidation-mode consolidation-mode))
-    congestion-control (.setCongestionControl (utils/->congestion-control congestion-control))
-    priority (.setPriority (utils/->priority priority))
-    timeout (.setTimeout timeout)
-    (some? express) (.setExpress (boolean express))))
+  (let [^QuerierOptions querier-opts (QuerierOptions.)]
+    (when target (.setTarget querier-opts (utils/->query-target target)))
+    (when consolidation-mode (.setConsolidationMode querier-opts (utils/->consolidation-mode consolidation-mode)))
+    (when congestion-control (.setCongestionControl querier-opts (utils/->congestion-control congestion-control)))
+    (when priority (.setPriority querier-opts (utils/->priority priority)))
+    (when timeout (.setTimeout querier-opts timeout))
+    (when express (.setExpress querier-opts (boolean express)))
+    querier-opts))
 
 (defn querier
   "Declare a Querier on a key expression.
