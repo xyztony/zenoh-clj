@@ -1,0 +1,63 @@
+#!/usr/bin/env bb
+
+(require '[babashka.process :refer [shell]]
+         '[clojure.string :as str]
+         '[clojure.java.io :as io])
+
+(defn git-count-revs []
+  (-> (shell {:out :string} "git rev-list HEAD --count")
+      :out
+      str/trim))
+
+(defn get-version []
+  (format "0.0.%s" (git-count-revs)))
+
+(defn clean []
+  (println "Cleaning...")
+  (shell "clj -T:build clean"))
+
+(defn build []
+  (println "Building jar...")
+  (shell "clj -T:build jar"))
+
+(defn update-pom-version [new-version]
+  (let [pom-content (slurp "pom.xml")
+        pattern #"(<artifactId>zenoh-clj</artifactId>\s*<version>)([^<]+)(</version>)"
+        updated-content (str/replace pom-content pattern (str "$1" new-version "$3"))]
+    (if (= pom-content updated-content)
+      (println "NOTE: No changes made to pom.xml version. Check if pattern matches or version is identical.")
+      (do
+        (spit "pom.xml" updated-content)
+        (println "Updated pom.xml version to" new-version)))))
+
+(defn update-pom []
+  (println "Updating root pom.xml...")
+  (shell "clj -Spom")
+  (update-pom-version (get-version)))
+
+(defn check-env-vars []
+  (let [username (System/getenv "CLOJARS_USERNAME")
+        password (System/getenv "CLOJARS_PASSWORD")]
+    (when (or (str/blank? username) (str/blank? password))
+      (println "\nError: CLOJARS_USERNAME and CLOJARS_PASSWORD environment variables must be set.")
+      (System/exit 1))))
+
+(defn deploy [version]
+  (check-env-vars)
+  (let [jar-file (format "target/zenoh-clj-%s.jar" version)]
+    (println (str "Deploying " jar-file "..."))
+    (if (.exists (io/file jar-file))
+      (shell "clj" "-X:deploy" ":artifact" (str "\"" jar-file "\"") ":version" (str "\"" version "\""))
+      (do
+        (println (str "Error: Jar file not found: " jar-file))
+        (System/exit 1)))))
+
+(defn -main [& args]
+  (when-not (some #{"--skip-build"} args)
+    (clean)
+    (update-pom)
+    (build))
+  (when (some #{"--deploy"} args)
+    (deploy (get-version))))
+
+(apply -main *command-line-args*)
